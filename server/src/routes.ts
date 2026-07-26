@@ -6,12 +6,15 @@ import { requireAuth, signToken } from './auth.js';
 import { hub } from './hub.js';
 import {
   createUser,
+  devicesOf,
   getConversation,
   listConversations,
   listMessages,
   markRead,
   memberIdsOf,
   openDirectConversation,
+  registerDevice,
+  removeDevice,
   searchUsers,
   StoreError,
   verifyCredentials,
@@ -73,6 +76,37 @@ router.get('/users/search', requireAuth, (req, res) => {
     return;
   }
   res.json(searchUsers(req.user!.id, q));
+});
+
+/* ---------------------------- devices --------------------------- */
+
+/**
+ * 上报本设备的 P2P 端点。服务器在这里只扮演"通讯录"：
+ * 存公钥和可达地址给好友去直连，消息本身不经过服务器。
+ */
+router.post('/devices', requireAuth, (req, res) => {
+  const { publicKey, addresses } = req.body ?? {};
+  assert(typeof publicKey === 'string' && publicKey, 'invalid_public_key', '缺少 publicKey');
+  assert(Array.isArray(addresses), 'invalid_addresses', 'addresses 必须是数组');
+
+  const device = registerDevice({ userId: req.user!.id, publicKey, addresses });
+
+  // 通知在线好友：我的直连地址变了，可以来连我
+  const peers = new Set<string>();
+  for (const conv of listConversations(req.user!.id)) {
+    for (const member of conv.members) {
+      if (member.id !== req.user!.id) peers.add(member.id);
+    }
+  }
+  const mine = devicesOf(req.user!.id);
+  hub.broadcast(peers, { t: 'devices', userId: req.user!.id, devices: mine });
+
+  res.status(201).json(device);
+});
+
+router.delete('/devices/:publicKey', requireAuth, (req, res) => {
+  removeDevice(req.params.publicKey);
+  res.status(204).end();
 });
 
 /* -------------------------- conversations ----------------------- */

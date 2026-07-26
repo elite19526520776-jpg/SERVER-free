@@ -263,6 +263,68 @@ test('伪造 token 无法建立 WebSocket 连接', async () => {
   fake.rt.disconnect();
 });
 
+test('设备端点注册后出现在对方的会话成员里', async () => {
+  const aliceDevice = {
+    publicKey: 'aa'.repeat(32),
+    addresses: [
+      { host: '2408:8207:1::abcd', port: 4310, kind: 'ipv6' as const },
+      { host: '192.168.1.10', port: 4310, kind: 'lan' as const },
+    ],
+  };
+  const registered = await alice.registerDevice(aliceDevice);
+  assert.equal(registered.publicKey, aliceDevice.publicKey);
+  assert.equal(registered.addresses.length, 2);
+
+  // Bob 拉会话时应能看到 Alice 的直连端点
+  const convs = await bob.listConversations();
+  const aliceMember = convs[0].members.find((m) => m.id === aliceId);
+  assert.ok(aliceMember, '应能找到 Alice');
+  assert.equal(aliceMember!.devices.length, 1);
+  assert.equal(aliceMember!.devices[0].publicKey, aliceDevice.publicKey);
+  assert.equal(aliceMember!.devices[0].addresses[0].kind, 'ipv6', '公网 IPv6 地址应保留');
+
+  // Bob 自己那条记录还没注册设备
+  const bobMember = convs[0].members.find((m) => m.id === bobId);
+  assert.deepEqual(bobMember!.devices, []);
+});
+
+test('设备公钥格式非法会被拒绝', async () => {
+  await assert.rejects(
+    () => alice.registerDevice({ publicKey: 'not-a-key', addresses: [] }),
+    (err: any) => err.status === 400 && err.code === 'invalid_public_key',
+  );
+});
+
+test('别人的设备公钥不能被占用', async () => {
+  await assert.rejects(
+    () => bob.registerDevice({ publicKey: 'aa'.repeat(32), addresses: [] }),
+    (err: any) => err.status === 409 && err.code === 'device_taken',
+  );
+});
+
+test('设备地址更新会实时推给在线好友', async () => {
+  const b = makeClient(bobToken);
+  await b.rt.connect();
+  await waitFor(b.events, 'ready');
+
+  await alice.registerDevice({
+    publicKey: 'aa'.repeat(32),
+    addresses: [{ host: '2408:8207:1::ffff', port: 4310, kind: 'ipv6' }],
+  });
+
+  const event = await waitFor(b.events, 'devices', (e) => e.userId === aliceId);
+  assert.equal(event.devices[0].addresses[0].host, '2408:8207:1::ffff');
+
+  b.rt.disconnect();
+});
+
+test('注销设备后好友就看不到直连端点了', async () => {
+  await alice.unregisterDevice('aa'.repeat(32));
+  const convs = await bob.listConversations();
+  const aliceMember = convs[0].members.find((m) => m.id === aliceId);
+  assert.deepEqual(aliceMember!.devices, []);
+});
+
 test('正在输入状态会转发给对方，且不会回给自己', async () => {
   const a = makeClient(aliceToken);
   const b = makeClient(bobToken);

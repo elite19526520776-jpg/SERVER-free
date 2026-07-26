@@ -2,6 +2,7 @@
  * 客户端与服务端共用的领域模型。
  * 服务端返回的 JSON 结构必须与这里保持一致。
  */
+import type { PeerAddress } from './address.js';
 
 export interface User {
   id: string;
@@ -12,9 +13,22 @@ export interface User {
   createdAt: number;
 }
 
+/**
+ * 一台已登录设备的 P2P 端点信息。
+ * 服务器只保存公钥和地址，不掌握私钥，也看不到 P2P 通道里的内容。
+ */
+export interface PeerDevice {
+  /** ed25519 设备公钥 hex */
+  publicKey: string;
+  addresses: PeerAddress[];
+  updatedAt: number;
+}
+
 /** 会话成员的公开信息（会话列表 / 聊天页顶部需要） */
 export interface Member extends User {
   lastReadMessageId: string | null;
+  /** 对方在线设备的直连端点，用于尝试 P2P；为空表示只能走服务器 */
+  devices: PeerDevice[];
 }
 
 export type ConversationType = 'direct' | 'group';
@@ -70,6 +84,8 @@ export type ServerEvent =
   | { t: 'typing'; conversationId: string; userId: string; on: boolean }
   | { t: 'read'; conversationId: string; userId: string; messageId: string }
   | { t: 'presence'; userId: string; online: boolean }
+  /** 对方设备的直连地址有变（上线 / 换网络），客户端据此重试 P2P */
+  | { t: 'devices'; userId: string; devices: PeerDevice[] }
   | { t: 'pong' }
   | { t: 'error'; code: string; message: string };
 

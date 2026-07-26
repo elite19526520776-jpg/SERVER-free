@@ -46,6 +46,16 @@ CREATE TABLE IF NOT EXISTS messages (
   client_id       TEXT
 );
 
+-- P2P 设备端点。服务器只当"通讯录"用：存公钥和可达地址，
+-- 客户端拿到后自己去直连，消息内容不经过这里。
+CREATE TABLE IF NOT EXISTS devices (
+  public_key TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  addresses  TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages(conversation_id, seq);
 CREATE INDEX IF NOT EXISTS idx_members_user ON conversation_members(user_id);
 -- 同一发送者的同一 clientId 只允许落库一次，断线重发不会产生重复消息
@@ -91,6 +101,14 @@ export interface ConversationRow {
   title: string | null;
   created_at: number;
   direct_key: string | null;
+}
+
+export interface DeviceRow {
+  public_key: string;
+  user_id: string;
+  /** JSON 序列化的 PeerAddress[] */
+  addresses: string;
+  updated_at: number;
 }
 
 export interface MemberRow {

@@ -8,13 +8,29 @@ import React, {
   useState,
 } from 'react';
 import { AppState } from 'react-native';
-import { RealtimeClient, mergeMessages, newClientId } from '@chat/shared';
-import type { ConnectionState, Conversation, Message, ServerEvent } from '@chat/shared';
+import {
+  RealtimeClient,
+  conversationPeer,
+  mergeMessages,
+  newClientId,
+  newPeerMessageId,
+} from '@chat/shared';
+import type {
+  ConnectionState,
+  Conversation,
+  Message,
+  PeerEvent,
+  ServerEvent,
+} from '@chat/shared';
+import { PeerManager, type PeerState } from '../p2p/PeerManager';
 import { storage } from '../storage';
 import { useAuth } from './AuthContext';
 
 /** 本地乐观消息的发送状态；服务端确认后从表里移除 */
 export type SendStatus = 'sending' | 'failed';
+
+/** 一条消息实际走的通道 */
+export type Channel = 'p2p-lan' | 'p2p-ipv6' | 'server' | 'none';
 
 interface ChatValue {
   connection: ConnectionState;
@@ -27,6 +43,20 @@ interface ChatValue {
   typingIn: (conversationId: string) => string[];
   hasMoreIn: (conversationId: string) => boolean;
   loadingMoreIn: (conversationId: string) => boolean;
+
+  /* --------------------------- P2P --------------------------- */
+  /** 本机是否支持直连（浏览器里不支持） */
+  p2pAvailable: boolean;
+  p2pUnavailableReason: string;
+  /** 本设备公钥，UI 上给用户核对指纹 */
+  deviceIdPub: string | null;
+  peerStates: Record<string, PeerState>;
+  /** 某个会话当前走的通道 */
+  channelOf: (conversationId: string) => Channel;
+  /** 生成配对码需要的本机地址 */
+  localPeerAddresses: () => Promise<import('@chat/shared').PeerAddress[]>;
+  /** 扫码/粘贴配对码后调用 */
+  pairWithPayload: (payload: import('@chat/shared').PairingPayload) => Promise<void>;
 
   refresh: () => Promise<void>;
   ensureMessages: (conversationId: string) => Promise<void>;
@@ -57,7 +87,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [exhausted, setExhausted] = useState<Record<string, boolean>>({});
   const [loadingMore, setLoadingMore] = useState<Record<string, boolean>>({});
 
+  const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
+
   const rtRef = useRef<RealtimeClient | null>(null);
+  const peerRef = useRef<PeerManager | null>(null);
   /** 已经拉过历史的会话，避免每次进页面都重复请求 */
   const fetchedRef = useRef<Set<string>>(new Set());
   const typingTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -133,6 +166,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           upsertConversation(event.conversation);
           break;
         }
+        case 'devices': {
+          // 好友换了网络 / 刚上线，地址变了，立刻重试直连
+          setConversations((prev) =>
+            prev.map((c) => ({
+              ...c,
+              members: c.members.map((m) =>
+                m.id === event.userId ? { ...m, devices: event.devices } : m,
+              ),
+            })),
+          );
+          break;
+        }
         case 'message': {
           // 自己发的消息已经由 ack 处理过，这里只补会话快照
           appendMessage(event.message);
@@ -206,6 +251,99 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       return { ...prev, [conversationId]: nextConv };
     });
   }
+
+  /* ---------------------------------------------------------------- */
+  /* P2P                                                               */
+  /* ---------------------------------------------------------------- */
+
+  /** 私聊会话对应的对端 userId；群聊暂不走 P2P */
+  const peerIdOf = useCallback(
+    (conversationId: string): string | null => {
+      const conv = conversationsRef.current.find((c) => c.id === conversationId);
+      if (!conv || conv.type !== 'direct' || !selfId) return null;
+      return conversationPeer(conv, selfId)?.id ?? null;
+    },
+    [selfId],
+  );
+
+  /** 收到 P2P 消息后本地更新会话，服务器不知道这条消息，只能自己维护 */
+  const touchConversation = useCallback(
+    (conversationId: string, message: Message, unread: boolean) => {
+      setConversations((prev) =>
+        sortConversations(
+          prev.map((c) =>
+            c.id === conversationId
+              ? {
+                  ...c,
+                  lastMessage: message,
+                  unreadCount: unread ? c.unreadCount + 1 : c.unreadCount,
+                }
+              : c,
+          ),
+        ),
+      );
+    },
+    [],
+  );
+
+  const handlePeerEvent = useCallback(
+    (event: PeerEvent) => {
+      switch (event.t) {
+        case 'msg': {
+          appendMessage(event.message);
+          touchConversation(event.message.conversationId, event.message, true);
+          clearTyping(event.message.conversationId, event.message.senderId);
+          // 回执，让对方的「发送中」落定
+          if (event.message.clientId) {
+            peerRef.current?.send(event.message.senderId, {
+              t: 'ack',
+              clientId: event.message.clientId,
+              messageId: event.message.id,
+            });
+          }
+          break;
+        }
+        case 'ack': {
+          // 对端已收下，把「发送中」去掉
+          setSendStatus((prev) => {
+            if (!(event.clientId in prev)) return prev;
+            const next = { ...prev };
+            delete next[event.clientId];
+            return next;
+          });
+          break;
+        }
+        case 'typing': {
+          const userId = peerIdOf(event.conversationId);
+          if (!userId) break;
+          if (event.on) markTyping(event.conversationId, userId);
+          else clearTyping(event.conversationId, userId);
+          break;
+        }
+        case 'read': {
+          const userId = peerIdOf(event.conversationId);
+          if (!userId) break;
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === event.conversationId
+                ? {
+                    ...c,
+                    members: c.members.map((m) =>
+                      m.id === userId ? { ...m, lastReadMessageId: event.messageId } : m,
+                    ),
+                  }
+                : c,
+            ),
+          );
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [appendMessage, touchConversation, peerIdOf],
+  );
 
   /* ---------------------------------------------------------------- */
   /* 数据拉取                                                           */
@@ -298,9 +436,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (!body || !selfId) return;
 
       const clientId = newClientId();
-      // 先把消息塞进列表（id 暂用 clientId），发送成功后由 ack 替换成服务端消息
+      const peerId = peerIdOf(conversationId);
+      // 直连可用就走 P2P：消息不经过服务器，id 由本机生成（p_ 前缀）
+      const direct = !!peerId && !!peerRef.current?.isDirect(peerId);
+
       const optimistic: Message = {
-        id: clientId,
+        // 走服务器时 id 暂用 clientId，等服务端 ack 回来再换成正式 id
+        id: direct ? newPeerMessageId() : clientId,
         conversationId,
         senderId: selfId,
         kind: 'text',
@@ -311,10 +453,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       appendMessage(optimistic);
       setSendStatus((prev) => ({ ...prev, [clientId]: 'sending' }));
 
-      const delivered = rtRef.current?.send({ t: 'send', conversationId, clientId, body });
-      if (!delivered) {
-        // 已进离线队列，重连后自动补发，这里只是把状态显示成“发送中”
-        setSendStatus((prev) => ({ ...prev, [clientId]: 'sending' }));
+      if (direct && peerId) {
+        const sent = peerRef.current!.send(peerId, { t: 'msg', message: optimistic });
+        if (!sent) {
+          // 直连刚好在这一刻断了，退回服务器重发一遍
+          rtRef.current?.send({ t: 'send', conversationId, clientId, body });
+        }
+      } else {
+        // 断线时 RealtimeClient 会把它放进离线队列，恢复后自动补发
+        rtRef.current?.send({ t: 'send', conversationId, clientId, body });
       }
 
       setConversations((prev) =>
@@ -323,7 +470,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         ),
       );
     },
-    [appendMessage, selfId],
+    [appendMessage, peerIdOf, selfId],
   );
 
   const retryMessage = useCallback((message: Message) => {
@@ -337,9 +484,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const setTyping = useCallback((conversationId: string, on: boolean) => {
-    rtRef.current?.send({ t: 'typing', conversationId, on });
-  }, []);
+  const setTyping = useCallback(
+    (conversationId: string, on: boolean) => {
+      const peerId = peerIdOf(conversationId);
+      if (peerId && peerRef.current?.send(peerId, { t: 'typing', conversationId, on })) return;
+      rtRef.current?.send({ t: 'typing', conversationId, on });
+    },
+    [peerIdOf],
+  );
 
   const markRead = useCallback((conversationId: string) => {
     const list = messagesRef.current[conversationId] ?? [];
@@ -353,8 +505,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setConversations((prev) =>
       prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)),
     );
-    rtRef.current?.send({ t: 'read', conversationId, messageId: last.id });
-  }, []);
+
+    const peerId = peerIdOf(conversationId);
+    if (peerId && peerRef.current?.send(peerId, { t: 'read', conversationId, messageId: last.id })) {
+      return;
+    }
+    // P2P 消息服务器不认识，别拿它的 id 去请求服务器
+    if (!last.id.startsWith('p_')) {
+      rtRef.current?.send({ t: 'read', conversationId, messageId: last.id });
+    }
+  }, [peerIdOf]);
 
   const openDirect = useCallback(
     async (userId: string) => {
@@ -398,6 +558,61 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (rtRef.current === client) rtRef.current = null;
     };
   }, [status, serverUrl, getToken, handleEvent]);
+
+  // P2P：登录后启动监听 / 局域网发现，并把本机端点注册给服务器供好友直连
+  useEffect(() => {
+    if (status !== 'signedIn' || !user) {
+      void peerRef.current?.stop();
+      peerRef.current = null;
+      setPeerStates({});
+      return;
+    }
+
+    const manager = new PeerManager({
+      onEvent: (event) => handlePeerEvent(event),
+      onStateChange: setPeerStates,
+    });
+    peerRef.current = manager;
+
+    let cancelled = false;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+    (async () => {
+      const enabled = await storage.getP2pEnabled();
+      if (cancelled || !enabled) return;
+
+      const addresses = await manager.start(user);
+      if (cancelled) return;
+
+      const identity = manager.deviceIdentity;
+      if (!identity || !addresses.length) return;
+
+      const publish = async () => {
+        try {
+          await api.registerDevice({ publicKey: identity.publicKey, addresses });
+        } catch (err) {
+          // 服务器不可用不影响已经建立的直连
+          console.warn('[p2p] 上报设备端点失败', err);
+        }
+      };
+      await publish();
+      // 服务端 30 分钟不更新就认为地址过期，这里定期续一下
+      heartbeat = setInterval(publish, 10 * 60 * 1000);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (heartbeat) clearInterval(heartbeat);
+      void manager.stop();
+      if (peerRef.current === manager) peerRef.current = null;
+    };
+  }, [status, user, api, handlePeerEvent]);
+
+  // 会话成员里带着好友的直连端点，拿到就尝试连过去
+  useEffect(() => {
+    if (!peerRef.current) return;
+    peerRef.current.syncPeers(conversations.flatMap((c) => c.members));
+  }, [conversations]);
 
   // 冷启动先渲染缓存，再请求服务端
   useEffect(() => {
@@ -449,6 +664,37 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const channelOf = useCallback(
+    (conversationId: string): Channel => {
+      const peerId = peerIdOf(conversationId);
+      const state = peerId ? peerStates[peerId] : undefined;
+      if (state?.status === 'direct') {
+        return state.route === 'ipv6' ? 'p2p-ipv6' : 'p2p-lan';
+      }
+      if (connection === 'online') return 'server';
+      return 'none';
+    },
+    [connection, peerIdOf, peerStates],
+  );
+
+  const localPeerAddresses = useCallback(
+    () => peerRef.current?.localPeerAddresses() ?? Promise.resolve([]),
+    [],
+  );
+
+  const pairWithPayload = useCallback(
+    async (payload: import('@chat/shared').PairingPayload) => {
+      // 先在服务器上建好会话（拿到双方一致的 conversationId），再记住公钥去直连
+      await openDirect(payload.userId).catch(() => undefined);
+      await peerRef.current?.pairWith({
+        userId: payload.userId,
+        idPub: payload.idPub,
+        addrs: payload.addrs,
+      });
+    },
+    [openDirect],
+  );
+
   const messagesOf = useCallback(
     (conversationId: string) => messages[conversationId] ?? [],
     [messages],
@@ -480,6 +726,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       typingIn,
       hasMoreIn,
       loadingMoreIn,
+      p2pAvailable: peerRef.current?.transportAvailable ?? false,
+      p2pUnavailableReason: peerRef.current?.transportUnavailableReason ?? '',
+      deviceIdPub: peerRef.current?.deviceIdentity?.publicKey ?? null,
+      peerStates,
+      channelOf,
+      localPeerAddresses,
+      pairWithPayload,
       refresh,
       ensureMessages,
       loadOlder,
@@ -499,6 +752,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       typingIn,
       hasMoreIn,
       loadingMoreIn,
+      peerStates,
+      channelOf,
+      localPeerAddresses,
+      pairWithPayload,
       refresh,
       ensureMessages,
       loadOlder,

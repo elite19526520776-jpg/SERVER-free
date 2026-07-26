@@ -1,11 +1,19 @@
 import bcrypt from 'bcryptjs';
 import { avatarColorFor, LIMITS } from '@chat/shared';
-import type { Conversation, Member, Message, User } from '@chat/shared';
+import type {
+  Conversation,
+  Member,
+  Message,
+  PeerAddress,
+  PeerDevice,
+  User,
+} from '@chat/shared';
 import {
   db,
   directKey,
   newId,
   type ConversationRow,
+  type DeviceRow,
   type MemberRow,
   type MessageRow,
   type UserRow,
@@ -114,6 +122,72 @@ export function searchUsers(selfId: string, q: string): User[] {
 }
 
 /* ------------------------------------------------------------------ */
+/* P2P 设备端点                                                        */
+/* ------------------------------------------------------------------ */
+
+/** 地址列表超过这个时间就认为过期了，对端多半已经换网络或下线 */
+const DEVICE_TTL_MS = 30 * 60 * 1000;
+
+function toDevice(row: DeviceRow): PeerDevice {
+  let addresses: PeerAddress[] = [];
+  try {
+    const parsed = JSON.parse(row.addresses);
+    if (Array.isArray(parsed)) addresses = parsed;
+  } catch {
+    // 脏数据不该让整个会话拉取失败，当作没有可用地址处理
+  }
+  return { publicKey: row.public_key, addresses, updatedAt: row.updated_at };
+}
+
+/** 客户端上线时上报自己的公钥和可达地址 */
+export function registerDevice(params: {
+  userId: string;
+  publicKey: string;
+  addresses: PeerAddress[];
+}): PeerDevice {
+  const { userId, publicKey } = params;
+  if (!/^[0-9a-f]{64}$/i.test(publicKey)) {
+    throw new StoreError(400, 'invalid_public_key', '设备公钥格式不正确');
+  }
+
+  // 一个公钥只能属于一个用户，防止别人占用你的设备标识
+  const existing = db
+    .prepare<[string], DeviceRow>('SELECT * FROM devices WHERE public_key = ?')
+    .get(publicKey);
+  if (existing && existing.user_id !== userId) {
+    throw new StoreError(409, 'device_taken', '该设备公钥已绑定到其它账号');
+  }
+
+  const addresses = params.addresses.filter(
+    (a) => a && typeof a.host === 'string' && Number.isInteger(a.port),
+  );
+  const now = Date.now();
+
+  db.prepare(
+    `INSERT INTO devices (public_key, user_id, addresses, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(public_key) DO UPDATE SET addresses = excluded.addresses,
+                                           updated_at = excluded.updated_at`,
+  ).run(publicKey, userId, JSON.stringify(addresses), now);
+
+  return { publicKey, addresses, updatedAt: now };
+}
+
+/** 某个用户当前可直连的设备（过期的不返回） */
+export function devicesOf(userId: string): PeerDevice[] {
+  return db
+    .prepare<[string, number], DeviceRow>(
+      'SELECT * FROM devices WHERE user_id = ? AND updated_at > ? ORDER BY updated_at DESC',
+    )
+    .all(userId, Date.now() - DEVICE_TTL_MS)
+    .map(toDevice);
+}
+
+export function removeDevice(publicKey: string) {
+  db.prepare('DELETE FROM devices WHERE public_key = ?').run(publicKey);
+}
+
+/* ------------------------------------------------------------------ */
 /* 会话                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -152,6 +226,7 @@ function membersOf(conversationId: string): Member[] {
   return rows.map((row) => ({
     ...toUser(row),
     lastReadMessageId: row.last_read_message_id,
+    devices: devicesOf(row.id),
   }));
 }
 

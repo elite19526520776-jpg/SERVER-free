@@ -1,5 +1,7 @@
 import React from 'react';
-import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { fingerprintOf } from '@chat/shared';
 import { Avatar } from '../../src/components/Avatar';
 import { Button } from '../../src/components/Button';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
@@ -19,8 +21,11 @@ const PLATFORM_LABEL: Record<string, string> = {
 
 export default function MeScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const { user, logout, serverUrl } = useAuth();
-  const { connection } = useChat();
+  const { connection, p2pAvailable, p2pUnavailableReason, deviceIdPub, peerStates } = useChat();
+
+  const directCount = Object.values(peerStates).filter((s) => s.status === 'direct').length;
   const { clearSelection } = useUi();
 
   const connectionLabel = {
@@ -65,6 +70,36 @@ export default function MeScreen() {
           <Row label="实时连接" value={connectionLabel} valueColor={connectionColor} />
           <Row label="当前平台" value={PLATFORM_LABEL[Platform.OS] ?? Platform.OS} />
           <Row label="服务器" value={serverUrl} />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.colors.textFaint }]}>
+            点对点直连
+          </Text>
+          <Row
+            label="直连能力"
+            value={p2pAvailable ? '已启用' : '不可用'}
+            valueColor={p2pAvailable ? theme.colors.success : theme.colors.textFaint}
+          />
+          {p2pAvailable ? (
+            <>
+              <Row
+                label="当前直连"
+                value={directCount > 0 ? `${directCount} 个好友` : '暂无'}
+                valueColor={directCount > 0 ? theme.colors.success : undefined}
+              />
+              {!!deviceIdPub && <Row label="设备指纹" value={fingerprintOf(deviceIdPub)} />}
+              <Pressable accessibilityRole="button" onPress={() => router.push('/pair')}>
+                <Text style={[styles.link, { color: theme.colors.primary }]}>
+                  面对面配对（不经过服务器）
+                </Text>
+              </Pressable>
+            </>
+          ) : (
+            <Text style={[styles.hint, { color: theme.colors.textFaint }]}>
+              {p2pUnavailableReason}
+            </Text>
+          )}
         </View>
 
         <View style={styles.section}>
@@ -165,5 +200,15 @@ const styles = StyleSheet.create({
   },
   logout: {
     marginTop: spacing.xxl,
+  },
+  link: {
+    fontSize: 14,
+    fontWeight: '600',
+    paddingVertical: spacing.md,
+  },
+  hint: {
+    fontSize: 13,
+    lineHeight: 19,
+    paddingVertical: spacing.sm,
   },
 });

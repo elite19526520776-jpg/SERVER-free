@@ -27,6 +27,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "tcp-bridge.js",
       "renderer/**/*"
     ],
     "win": {

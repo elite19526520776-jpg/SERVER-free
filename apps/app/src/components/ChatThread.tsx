@@ -20,6 +20,7 @@ import { spacing, useTheme } from '../theme';
 import { useAuth } from '../state/AuthContext';
 import { useChat } from '../state/ChatContext';
 import { Avatar } from './Avatar';
+import { ChannelBadge } from './ChannelBadge';
 import { Composer } from './Composer';
 import { EmptyState } from './EmptyState';
 import { MessageBubble } from './MessageBubble';
@@ -50,8 +51,10 @@ export function ChatThread({ conversation, onBack }: Props) {
     sendStatus,
     onlineUserIds,
     typingIn,
-    connection,
+    channelOf,
   } = useChat();
+
+  const channel = channelOf(conversation.id);
 
   const selfId = user?.id ?? '';
   const messages = messagesOf(conversation.id);
@@ -182,6 +185,7 @@ export function ChatThread({ conversation, onBack }: Props) {
             {subtitle}
           </Text>
         </View>
+        <ChannelBadge channel={channel} />
       </View>
 
       <FlatList
@@ -212,7 +216,8 @@ export function ChatThread({ conversation, onBack }: Props) {
       <Composer
         onSend={(body) => sendMessage(conversation.id, body)}
         onTypingChange={(on) => setTyping(conversation.id, on)}
-        disabled={connection !== 'online'}
+        // 直连可用时即便服务器断了也照样能发
+        disabled={channel === 'none'}
       />
     </KeyboardAvoidingView>
   );

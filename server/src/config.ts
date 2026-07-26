@@ -31,7 +31,11 @@ function resolveJwtSecret() {
 
 export const config = {
   port: Number(process.env.PORT ?? 4000),
-  host: process.env.HOST ?? '0.0.0.0',
+  /**
+   * 默认绑 ::（双栈）。Node 在双栈主机上绑 :: 会同时接受 IPv4 和 IPv6 连接，
+   * 主机没开 IPv6 时启动流程会自动退回 0.0.0.0。
+   */
+  host: process.env.HOST ?? '',
   dataDir,
   dbFile: process.env.CHAT_DB_FILE
     ? path.resolve(process.env.CHAT_DB_FILE)

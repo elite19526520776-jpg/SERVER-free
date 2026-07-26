@@ -7,6 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import type { User } from '@chat/shared';
 import { Avatar } from '../../src/components/Avatar';
 import { EmptyState } from '../../src/components/EmptyState';
@@ -19,6 +20,7 @@ import { radius, spacing, useTheme } from '../../src/theme';
 
 export default function ContactsScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const { api } = useAuth();
   const { openDirect, onlineUserIds } = useChat();
   const { selectConversation } = useUi();
@@ -81,7 +83,15 @@ export default function ContactsScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.surface }]}>
-      <ScreenHeader title="通讯录" subtitle="按用户名或昵称搜索" />
+      <ScreenHeader
+        title="通讯录"
+        subtitle="按用户名或昵称搜索"
+        right={
+          <Pressable accessibilityRole="button" onPress={() => router.push('/pair')} hitSlop={8}>
+            <Text style={[styles.pairLink, { color: theme.colors.primary }]}>面对面配对</Text>
+          </Pressable>
+        }
+      />
 
       <View style={styles.searchBox}>
         <TextField
@@ -197,5 +207,9 @@ const styles = StyleSheet.create({
   },
   loading: {
     paddingVertical: spacing.xl,
+  },
+  pairLink: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

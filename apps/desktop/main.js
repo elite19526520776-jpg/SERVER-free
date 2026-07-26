@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, shell, nativeTheme } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
+const { installTcpBridge } = require('./tcp-bridge');
 
 // CHATAPP_USE_BUNDLE=1 可以在未打包的情况下走线上加载路径，
 // 用来验证 renderer 产物本身有没有问题，不用每次都跑一遍 electron-builder。
@@ -155,6 +156,10 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    // P2P 直连用的 socket 都跑在主进程，渲染进程通过 preload 的桥来用
+    const bridge = installTcpBridge(() => BrowserWindow.getAllWindows()[0] ?? null);
+    app.on('will-quit', () => void bridge.dispose());
+
     await createWindow();
 
     // macOS：点 Dock 图标且没有窗口时重开一个

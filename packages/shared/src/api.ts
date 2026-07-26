@@ -1,8 +1,10 @@
+import type { PeerAddress } from './address.js';
 import type {
   AuthResult,
   Conversation,
   LoginBody,
   Message,
+  PeerDevice,
   RegisterBody,
   User,
 } from './types.js';
@@ -151,6 +153,20 @@ export class ApiClient {
     return this.request<void>('POST', `/api/conversations/${conversationId}/read`, {
       messageId,
     });
+  }
+
+  /* ---------------------------- devices --------------------------- */
+
+  /**
+   * 上报本设备的 P2P 端点，好友据此直连。
+   * 服务器只保存公钥和地址，不参与 P2P 通道的加密。
+   */
+  registerDevice(body: { publicKey: string; addresses: PeerAddress[] }) {
+    return this.request<PeerDevice>('POST', '/api/devices', body);
+  }
+
+  unregisterDevice(publicKey: string) {
+    return this.request<void>('DELETE', `/api/devices/${encodeURIComponent(publicKey)}`);
   }
 
   health() {

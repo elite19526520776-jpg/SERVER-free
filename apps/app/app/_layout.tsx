@@ -1,3 +1,5 @@
+// 必须最先加载：为 @noble 的密钥生成提供 crypto.getRandomValues（Hermes 默认没有）
+import 'react-native-get-random-values';
 import React, { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';

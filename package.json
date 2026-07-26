@@ -15,7 +15,9 @@
     "dev:web": "npm run web -w app",
     "dev:desktop": "npm --prefix apps/desktop run dev",
     "test:server": "npm run test -w @chat/server",
-    "postinstall": "npm run build:shared"
+    "postinstall": "npm run build:shared",
+    "test:p2p": "npm run test -w @chat/shared",
+    "test": "npm run test:p2p && npm run test:server"
   },
   "engines": {
     "node": ">=20"
