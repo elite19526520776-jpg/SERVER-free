@@ -1,0 +1,27 @@
+node_modules/
+.DS_Store
+*.log
+
+# 构建产物
+dist/
+build/
+packages/shared/dist/
+apps/app/dist/
+apps/app/.expo/
+apps/desktop/renderer/
+apps/desktop/release/
+
+# 原生工程（由 expo prebuild 生成，不入库）
+apps/app/ios/
+apps/app/android/
+
+# 服务端运行时数据
+server/data/
+server/dist/
+*.db
+*.db-wal
+*.db-shm
+
+# 本地环境变量
+.env
+.env.local

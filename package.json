@@ -1,0 +1,23 @@
+{
+  "name": "chatapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "跨平台聊天软件：iOS / Android / Windows / macOS",
+  "workspaces": [
+    "packages/shared",
+    "server",
+    "apps/app"
+  ],
+  "scripts": {
+    "build:shared": "npm run build -w @chat/shared",
+    "dev:server": "npm run dev -w @chat/server",
+    "dev:app": "npm run start -w app",
+    "dev:web": "npm run web -w app",
+    "dev:desktop": "npm --prefix apps/desktop run dev",
+    "test:server": "npm run test -w @chat/server",
+    "postinstall": "npm run build:shared"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
