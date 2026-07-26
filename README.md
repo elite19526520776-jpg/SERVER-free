@@ -153,23 +153,67 @@ npm run dev:desktop    # Electron 窗口（需要先跑上面的 dev:web）
 
 ## 打包发布
 
-### iOS / Android
+### iOS（.ipa）
 
-用 Expo 的云构建（EAS），不需要本地装 Xcode / Android Studio：
+**前提：编译 iOS 二进制必须有 macOS + Xcode**，`xcodebuild` / `codesign` 是 Apple 独占工具链，
+Linux / Windows 上没有任何办法本地出 .ipa。下面三条路都绕不开这一点，区别只是"谁的 Mac"。
+
+本项目用了原生模块（TCP socket、Bonjour、相机），**Expo Go 里跑不了**，必须出真包。
+
+#### 路线 A：GitHub Actions 出未签名 ipa —— 不需要 Apple 开发者账号
+
+仓库里已经配好 `.github/workflows/ios-ipa.yml`。在 GitHub 的 Actions 页面手动触发
+「构建 iOS ipa」，填上服务器地址即可，跑完在 Artifacts 里下载 `chatapp-unsigned.ipa`。
+
+它用 GitHub 的 macOS runner 编译，然后 `CODE_SIGNING_ALLOWED=NO` 跳过签名，
+把 `.app` 塞进 `Payload/` 打成 zip——这就是 ipa 的本质。
+
+> 未签名 ipa **不能直接双击安装**，要用 Sideloadly / AltStore / 爱思助手 之类的工具
+> 拿你自己的 Apple ID 自签之后再装。免费 Apple ID 签出来的应用 **7 天过期**，
+> 到期重签一次即可；付费开发者账号签的是 1 年。
+
+#### 路线 B：EAS 云构建 —— 需要 Apple 开发者账号（$99/年）
+
+产出的是**签名好、能直接安装**的 ipa，也能直接推 TestFlight：
 
 ```bash
 cd apps/app
 npx eas login
 npx eas build:configure
 
-npx eas build --platform android --profile preview      # 出 APK，直接装手机上试
-npx eas build --platform ios --profile preview          # 出模拟器包
-npx eas build --platform all --profile production       # 上架用的 aab + ipa
+npx eas build --platform ios --profile preview            # 真机 ipa（ad-hoc，需登记设备 UDID）
+npx eas build --platform ios --profile preview-simulator  # 模拟器包，不用开发者账号
+npx eas build --platform ios --profile production         # 上架 / TestFlight
 ```
 
-`eas.json` 里的 `EXPO_PUBLIC_SERVER_URL` 记得改成你自己的服务器地址——打包后的应用没法再自动猜到开发机 IP。
+CI 里跑的话，把 Expo 的访问令牌存成仓库 secret `EXPO_TOKEN`，
+上面那个 workflow 的 `eas-build` job 就会自动提交构建。
 
-想本地出包的话先 `npx expo prebuild` 生成原生工程，再用 Xcode / Gradle 编译。
+#### 路线 C：自己的 Mac 上用 Xcode
+
+```bash
+npm install && npm run build:shared
+cd apps/app
+npx expo prebuild --platform ios      # 生成 ios/ 原生工程
+cd ios && pod install
+open app.xcworkspace                  # 在 Xcode 里选好签名团队，Product → Archive
+```
+
+`ios/` 目录是 `expo prebuild` 根据 `app.json` 生成的，**没有入库**（Expo 的 CNG 约定）。
+改配置改 `app.json`，不要直接改 `ios/` 里的文件，否则下次 prebuild 会被覆盖。
+
+### Android（.apk）
+
+```bash
+cd apps/app
+npx eas build --platform android --profile preview   # 出 APK，直接装手机上试
+```
+
+Android 可以在 Linux / macOS / Windows 上本地出包：`npx expo prebuild --platform android`
+之后 `cd android && ./gradlew assembleRelease`。
+
+> 无论哪条路，`eas.json` 里的 `EXPO_PUBLIC_SERVER_URL` 都要改成你自己的服务器地址——
+> 打包后的应用没法再自动猜到开发机 IP。
 
 ### Windows / macOS
 

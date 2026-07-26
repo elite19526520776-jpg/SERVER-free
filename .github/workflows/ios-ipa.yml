@@ -1,0 +1,149 @@
+name: 构建 iOS ipa
+
+# .ipa 只能在 macOS 上编译（xcodebuild / codesign 是 Apple 独占工具链），
+# 所以这个工作流跑在 GitHub 的 macOS runner 上。
+#
+# 默认产出的是**未签名 ipa**：不需要 Apple 开发者账号，
+# 下载后用 Sideloadly / AltStore / 爱思助手 这类工具自签就能装到自己的 iPhone 上。
+# 要出可直接安装、能上 TestFlight 的签名包，走 eas-build 那个 job（需要开发者账号）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: '打进包里的服务器地址（留空则用 eas.json 里的默认值）'
+        required: false
+        default: ''
+      configuration:
+        description: '构建配置'
+        required: true
+        default: 'Release'
+        type: choice
+        options: [Release, Debug]
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  unsigned-ipa:
+    name: 未签名 ipa（无需开发者账号）
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建共享层
+        run: npm run build:shared
+
+      - name: 生成 iOS 原生工程
+        working-directory: apps/app
+        env:
+          # 打包后的应用没法再自动猜开发机 IP，必须在编译期定死
+          EXPO_PUBLIC_SERVER_URL: ${{ inputs.server_url }}
+        run: npx expo prebuild --platform ios --no-install --clean
+
+      - name: 缓存 CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: apps/app/ios/Pods
+          key: pods-${{ runner.os }}-${{ hashFiles('apps/app/ios/Podfile.lock', 'package-lock.json') }}
+          restore-keys: pods-${{ runner.os }}-
+
+      - name: pod install
+        working-directory: apps/app/ios
+        run: pod install --repo-update
+
+      - name: 编译（跳过签名）
+        working-directory: apps/app/ios
+        env:
+          EXPO_PUBLIC_SERVER_URL: ${{ inputs.server_url }}
+        run: |
+          set -eo pipefail
+          ARGS=(
+            -workspace app.xcworkspace
+            -scheme app
+            -configuration "${{ inputs.configuration || 'Release' }}"
+            -sdk iphoneos
+            -derivedDataPath build
+            -destination 'generic/platform=iOS'
+            CODE_SIGN_IDENTITY=""
+            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_ALLOWED=NO
+            ONLY_ACTIVE_ARCH=NO
+          )
+          # xcpretty 只是让日志好读，没装就直接输出原始日志；
+          # 不要用 `|| 重跑` 的写法，否则真的编译失败时会白白再跑一遍
+          if command -v xcpretty >/dev/null 2>&1; then
+            xcodebuild "${ARGS[@]}" | xcpretty
+          else
+            xcodebuild "${ARGS[@]}"
+          fi
+
+      - name: 打成 ipa
+        working-directory: apps/app/ios
+        run: |
+          APP_PATH=$(find build/Build/Products -maxdepth 2 -name '*.app' -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "没找到编译产物 .app"; exit 1
+          fi
+          echo "产物: $APP_PATH"
+          # ipa 本质就是一个把 .app 放进 Payload/ 目录的 zip
+          rm -rf Payload && mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry chatapp-unsigned.ipa Payload
+          ls -lh chatapp-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatapp-ios-unsigned-ipa
+          path: apps/app/ios/chatapp-unsigned.ipa
+          retention-days: 30
+
+      - name: 说明
+        run: |
+          echo "::notice::未签名 ipa 已生成。它不能直接安装，需要用 Sideloadly / AltStore 等工具"
+          echo "::notice::用你自己的 Apple ID 自签后再装（免费 Apple ID 签名有效期 7 天）。"
+
+  eas-build:
+    name: EAS 签名包（需要开发者账号）
+    runs-on: ubuntu-latest
+    # 只有配置了 EXPO_TOKEN 才跑，否则跳过
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 检查是否配置了 EXPO_TOKEN
+        id: check
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::warning::未配置 EXPO_TOKEN secret，跳过 EAS 构建。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 安装依赖
+        if: steps.check.outputs.skip == 'false'
+        run: npm ci
+
+      - name: 提交 EAS 构建
+        if: steps.check.outputs.skip == 'false'
+        working-directory: apps/app
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        # --non-interactive 时凭据必须已经配置在 Expo 账号里
+        run: npx eas-cli@latest build --platform ios --profile production --non-interactive --no-wait
