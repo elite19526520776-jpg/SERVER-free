@@ -87,7 +87,7 @@ jobs:
         env:
           EXPO_PUBLIC_SERVER_URL: ${{ inputs.server_url }}
         run: |
-          set -eo pipefail
+          set -o pipefail
           ARGS=(
             -workspace app.xcworkspace
             -scheme app
@@ -100,13 +100,20 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
             ONLY_ACTIVE_ARCH=NO
           )
-          # xcpretty 只是让日志好读，没装就直接输出原始日志；
-          # 不要用 `|| 重跑` 的写法，否则真的编译失败时会白白再跑一遍
-          if command -v xcpretty >/dev/null 2>&1; then
-            xcodebuild "${ARGS[@]}" | xcpretty
-          else
-            xcodebuild "${ARGS[@]}"
+          # 不经 xcpretty：它会吞掉构建脚本阶段（PhaseScriptExecution）的报错，
+          # 出问题时根本看不到原因。这里保留完整日志，失败了再摘关键片段出来。
+          if ! xcodebuild "${ARGS[@]}" > /tmp/xcodebuild.log 2>&1; then
+            echo "===== 所有 error: 行 ====="
+            grep -n "error:" /tmp/xcodebuild.log | head -60 || true
+            echo
+            echo "===== 失败的构建命令 ====="
+            grep -n -A 3 "The following build commands failed" /tmp/xcodebuild.log | head -30 || true
+            echo
+            echo "===== 最后 250 行 ====="
+            tail -250 /tmp/xcodebuild.log
+            exit 1
           fi
+          echo "编译成功"
 
       - name: 打成 ipa
         working-directory: apps/app/ios
