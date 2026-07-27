@@ -115,6 +115,25 @@ jobs:
           fi
           echo "编译成功"
 
+      # 构建脚本阶段（PhaseScriptExecution）失败时，xcodebuild 不会把脚本自己的
+      # 报错原样吐出来。这里单独复现一次，拿到真正的错误信息。
+      - name: 失败诊断
+        if: failure()
+        working-directory: apps/app/ios
+        run: |
+          echo "===== xcodebuild 日志里 ExpoModulesJSI 相关片段 ====="
+          grep -n -B 3 -A 30 "ExpoModulesJSI" /tmp/xcodebuild.log | tail -120 || true
+          echo
+          echo "===== React-jsi 头文件是否就位 ====="
+          ls -la Pods/Headers/Public/React-jsi/jsi/ 2>&1 | head -20 || echo "(没有这个目录)"
+          echo
+          echo "===== ExpoModulesJSI 的 Products 目录 ====="
+          ls -la ../../../node_modules/expo-modules-jsi/apple/Products/ 2>&1 | head -10 || echo "(没有这个目录)"
+          echo
+          echo "===== 手动执行该脚本，拿它自己的报错 ====="
+          PODS_ROOT="$PWD/Pods" PLATFORM_NAME=iphoneos \
+            bash -x ../../../node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh 2>&1 | tail -80 || true
+
       - name: 打成 ipa
         working-directory: apps/app/ios
         run: |
