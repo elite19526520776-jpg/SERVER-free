@@ -20,8 +20,12 @@ on:
         default: 'Release'
         type: choice
         options: [Release, Debug]
+  # 推一个 ipa-* 的 tag 就出一次包。
+  # 用独立的 tag 前缀而不是分支 push，避免每次改代码都触发一次 90 分钟的 macOS 构建。
+  # （workflow_dispatch 只有在 workflow 文件进了默认分支之后才能在页面上手动触发）
   push:
     tags:
+      - 'ipa-*'
       - 'v*'
 
 jobs:
