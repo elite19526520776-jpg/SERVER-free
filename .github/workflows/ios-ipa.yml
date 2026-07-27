@@ -58,6 +58,33 @@ jobs:
           node-version: 22
           cache: npm
 
+      # expo-modules-jsi 的 Package.swift 要求 Swift tools 6.2，
+      # runner 默认选中的 Xcode 只有 6.1，不切就会在
+      # "Build ExpoModulesJSI xcframework" 阶段报 "Could not resolve package dependencies"。
+      - name: 选择最新的 Xcode
+        run: |
+          echo "可用的 Xcode："
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+
+          # 按版本号排序取最新的一个
+          NEWEST=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$NEWEST" ]; then
+            sudo xcode-select -s "$NEWEST/Contents/Developer"
+          fi
+
+          echo "已选中："
+          xcodebuild -version
+          swift --version
+
+          # Swift 低于 6.2 就直接失败，别等到二十分钟后才在构建脚本里炸
+          SWIFT_VER=$(swift --version 2>&1 | grep -oE 'Swift version [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' | head -1)
+          echo "Swift 版本：$SWIFT_VER"
+          if [ "$(printf '%s\n6.2' "$SWIFT_VER" | sort -V | head -1)" != "6.2" ]; then
+            echo "::error::需要 Swift 6.2（expo-modules-jsi 的 Package.swift 要求），当前只有 $SWIFT_VER。"
+            echo "::error::请把 runs-on 换成更新的 macOS runner 镜像。"
+            exit 1
+          fi
+
       - name: 安装依赖
         run: npm ci
 
