@@ -28,6 +28,22 @@ on:
       - 'ipa-*'
       - 'v*'
 
+  # 同仓库的 PR 会直接用 PR 分支上的 workflow 跑，
+  # 这样不用先把文件合进默认分支就能出包。
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/app/**'
+      - 'packages/shared/**'
+      - '.github/workflows/ios-ipa.yml'
+      - 'package.json'
+      - 'package-lock.json'
+
+# 同一个分支上只保留最新一次构建，避免连续提交叠出几个 90 分钟的 macOS 任务
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unsigned-ipa:
     name: 未签名 ipa（无需开发者账号）
