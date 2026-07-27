@@ -61,29 +61,42 @@ jobs:
       # expo-modules-jsi 的 Package.swift 要求 Swift tools 6.2，
       # runner 默认选中的 Xcode 只有 6.1，不切就会在
       # "Build ExpoModulesJSI xcframework" 阶段报 "Could not resolve package dependencies"。
-      - name: 选择最新的 Xcode
+      # Xcode 版本要卡在一个窄区间里：
+      #   - 低于 Swift 6.2：expo-modules-jsi 的 Package.swift 解析不了
+      #     （"package 'apple' is using Swift tools version 6.2.0"）
+      #   - Xcode 26.3 的编译器：Expo 自己的源码编不过
+      #     （JavaScriptCodable+Date.swift "type of expression is ambiguous"）
+      # 所以取"满足 Swift >= 6.2 的最老那个"，而不是最新的。
+      - name: 选择合适的 Xcode
         run: |
-          echo "可用的 Xcode："
-          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          set -u
+          echo "扫描可用的 Xcode 及其 Swift 版本："
 
-          # 按版本号排序取最新的一个
-          NEWEST=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          if [ -n "$NEWEST" ]; then
-            sudo xcode-select -s "$NEWEST/Contents/Developer"
-          fi
+          PICKED=""
+          for app in $(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V); do
+            dev="$app/Contents/Developer"
+            ver=$(DEVELOPER_DIR="$dev" swift --version 2>/dev/null \
+                  | grep -oE 'Swift version [0-9]+\.[0-9]+' \
+                  | grep -oE '[0-9]+\.[0-9]+' | head -1)
+            echo "  $(basename "$app") -> Swift ${ver:-未知}"
 
-          echo "已选中："
-          xcodebuild -version
-          swift --version
+            # min(ver, 6.2) == 6.2 等价于 ver >= 6.2
+            if [ -z "$PICKED" ] && [ -n "$ver" ] \
+               && [ "$(printf '%s\n6.2' "$ver" | sort -V | head -1)" = "6.2" ]; then
+              PICKED="$dev"
+              echo "    ^ 选中这个（首个满足 Swift >= 6.2）"
+            fi
+          done
 
-          # Swift 低于 6.2 就直接失败，别等到二十分钟后才在构建脚本里炸
-          SWIFT_VER=$(swift --version 2>&1 | grep -oE 'Swift version [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' | head -1)
-          echo "Swift 版本：$SWIFT_VER"
-          if [ "$(printf '%s\n6.2' "$SWIFT_VER" | sort -V | head -1)" != "6.2" ]; then
-            echo "::error::需要 Swift 6.2（expo-modules-jsi 的 Package.swift 要求），当前只有 $SWIFT_VER。"
-            echo "::error::请把 runs-on 换成更新的 macOS runner 镜像。"
+          if [ -z "$PICKED" ]; then
+            echo "::error::镜像里没有 Swift >= 6.2 的 Xcode，expo-modules-jsi 无法构建。"
             exit 1
           fi
+
+          sudo xcode-select -s "$PICKED"
+          echo "最终使用："
+          xcodebuild -version
+          swift --version
 
       - name: 安装依赖
         run: npm ci
