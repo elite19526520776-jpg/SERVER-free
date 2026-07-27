@@ -1,0 +1,235 @@
+name: 构建 iOS ipa
+
+# .ipa 只能在 macOS 上编译（xcodebuild / codesign 是 Apple 独占工具链），
+# 所以这个工作流跑在 GitHub 的 macOS runner 上。
+#
+# 默认产出的是**未签名 ipa**：不需要 Apple 开发者账号，
+# 下载后用 Sideloadly / AltStore / 爱思助手 这类工具自签就能装到自己的 iPhone 上。
+# 要出可直接安装、能上 TestFlight 的签名包，走 eas-build 那个 job（需要开发者账号）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: '打进包里的服务器地址（留空则用 eas.json 里的默认值）'
+        required: false
+        default: ''
+      configuration:
+        description: '构建配置'
+        required: true
+        default: 'Release'
+        type: choice
+        options: [Release, Debug]
+  # 推一个 ipa-* 的 tag 就出一次包。
+  # 用独立的 tag 前缀而不是分支 push，避免每次改代码都触发一次 90 分钟的 macOS 构建。
+  # （workflow_dispatch 只有在 workflow 文件进了默认分支之后才能在页面上手动触发）
+  push:
+    tags:
+      - 'ipa-*'
+      - 'v*'
+
+  # 同仓库的 PR 会直接用 PR 分支上的 workflow 跑，
+  # 这样不用先把文件合进默认分支就能出包。
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/app/**'
+      - 'packages/shared/**'
+      - '.github/workflows/ios-ipa.yml'
+      - 'package.json'
+      - 'package-lock.json'
+
+# 同一个分支上只保留最新一次构建，避免连续提交叠出几个 90 分钟的 macOS 任务
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unsigned-ipa:
+    name: 未签名 ipa（无需开发者账号）
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # expo-modules-jsi 的 Package.swift 要求 Swift tools 6.2，
+      # runner 默认选中的 Xcode 只有 6.1，不切就会在
+      # "Build ExpoModulesJSI xcframework" 阶段报 "Could not resolve package dependencies"。
+      # Xcode 版本要卡在一个窄区间里：
+      #   - 低于 Swift 6.2：expo-modules-jsi 的 Package.swift 解析不了
+      #     （"package 'apple' is using Swift tools version 6.2.0"）
+      #   - Xcode 26.3 的编译器：Expo 自己的源码编不过
+      #     （JavaScriptCodable+Date.swift "type of expression is ambiguous"）
+      # 所以取"满足 Swift >= 6.2 的最老那个"，而不是最新的。
+      - name: 选择合适的 Xcode
+        run: |
+          set -u
+          echo "扫描可用的 Xcode 及其 Swift 版本："
+
+          PICKED=""
+          for app in $(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V); do
+            dev="$app/Contents/Developer"
+            ver=$(DEVELOPER_DIR="$dev" swift --version 2>/dev/null \
+                  | grep -oE 'Swift version [0-9]+\.[0-9]+' \
+                  | grep -oE '[0-9]+\.[0-9]+' | head -1)
+            echo "  $(basename "$app") -> Swift ${ver:-未知}"
+
+            # min(ver, 6.2) == 6.2 等价于 ver >= 6.2
+            if [ -z "$PICKED" ] && [ -n "$ver" ] \
+               && [ "$(printf '%s\n6.2' "$ver" | sort -V | head -1)" = "6.2" ]; then
+              PICKED="$dev"
+              echo "    ^ 选中这个（首个满足 Swift >= 6.2）"
+            fi
+          done
+
+          if [ -z "$PICKED" ]; then
+            echo "::error::镜像里没有 Swift >= 6.2 的 Xcode，expo-modules-jsi 无法构建。"
+            exit 1
+          fi
+
+          sudo xcode-select -s "$PICKED"
+          echo "最终使用："
+          xcodebuild -version
+          swift --version
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建共享层
+        run: npm run build:shared
+
+      - name: 生成 iOS 原生工程
+        working-directory: apps/app
+        env:
+          # 打包后的应用没法再自动猜开发机 IP，必须在编译期定死
+          EXPO_PUBLIC_SERVER_URL: ${{ inputs.server_url }}
+        run: npx expo prebuild --platform ios --no-install --clean
+
+      - name: 缓存 CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: apps/app/ios/Pods
+          key: pods-${{ runner.os }}-${{ hashFiles('apps/app/ios/Podfile.lock', 'package-lock.json') }}
+          restore-keys: pods-${{ runner.os }}-
+
+      - name: pod install
+        working-directory: apps/app/ios
+        run: pod install --repo-update
+
+      - name: 编译（跳过签名）
+        working-directory: apps/app/ios
+        env:
+          EXPO_PUBLIC_SERVER_URL: ${{ inputs.server_url }}
+        run: |
+          set -o pipefail
+          ARGS=(
+            -workspace app.xcworkspace
+            -scheme app
+            -configuration "${{ inputs.configuration || 'Release' }}"
+            -sdk iphoneos
+            -derivedDataPath build
+            -destination 'generic/platform=iOS'
+            CODE_SIGN_IDENTITY=""
+            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_ALLOWED=NO
+            ONLY_ACTIVE_ARCH=NO
+          )
+          # 不经 xcpretty：它会吞掉构建脚本阶段（PhaseScriptExecution）的报错，
+          # 出问题时根本看不到原因。这里保留完整日志，失败了再摘关键片段出来。
+          if ! xcodebuild "${ARGS[@]}" > /tmp/xcodebuild.log 2>&1; then
+            echo "===== 所有 error: 行 ====="
+            grep -n "error:" /tmp/xcodebuild.log | head -60 || true
+            echo
+            echo "===== 失败的构建命令 ====="
+            grep -n -A 3 "The following build commands failed" /tmp/xcodebuild.log | head -30 || true
+            echo
+            echo "===== 最后 250 行 ====="
+            tail -250 /tmp/xcodebuild.log
+            exit 1
+          fi
+          echo "编译成功"
+
+      # 构建脚本阶段（PhaseScriptExecution）失败时，xcodebuild 不会把脚本自己的
+      # 报错原样吐出来。这里单独复现一次，拿到真正的错误信息。
+      - name: 失败诊断
+        if: failure()
+        working-directory: apps/app/ios
+        run: |
+          echo "===== xcodebuild 日志里 ExpoModulesJSI 相关片段 ====="
+          grep -n -B 3 -A 30 "ExpoModulesJSI" /tmp/xcodebuild.log | tail -120 || true
+          echo
+          echo "===== React-jsi 头文件是否就位 ====="
+          ls -la Pods/Headers/Public/React-jsi/jsi/ 2>&1 | head -20 || echo "(没有这个目录)"
+          echo
+          echo "===== ExpoModulesJSI 的 Products 目录 ====="
+          ls -la ../../../node_modules/expo-modules-jsi/apple/Products/ 2>&1 | head -10 || echo "(没有这个目录)"
+          echo
+          echo "===== 手动执行该脚本，拿它自己的报错 ====="
+          PODS_ROOT="$PWD/Pods" PLATFORM_NAME=iphoneos \
+            bash -x ../../../node_modules/expo-modules-jsi/apple/scripts/build-xcframework.sh 2>&1 | tail -80 || true
+
+      - name: 打成 ipa
+        working-directory: apps/app/ios
+        run: |
+          APP_PATH=$(find build/Build/Products -maxdepth 2 -name '*.app' -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "没找到编译产物 .app"; exit 1
+          fi
+          echo "产物: $APP_PATH"
+          # ipa 本质就是一个把 .app 放进 Payload/ 目录的 zip
+          rm -rf Payload && mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry chatapp-unsigned.ipa Payload
+          ls -lh chatapp-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatapp-ios-unsigned-ipa
+          path: apps/app/ios/chatapp-unsigned.ipa
+          retention-days: 30
+
+      - name: 说明
+        run: |
+          echo "::notice::未签名 ipa 已生成。它不能直接安装，需要用 Sideloadly / AltStore 等工具"
+          echo "::notice::用你自己的 Apple ID 自签后再装（免费 Apple ID 签名有效期 7 天）。"
+
+  eas-build:
+    name: EAS 签名包（需要开发者账号）
+    runs-on: ubuntu-latest
+    # 只有配置了 EXPO_TOKEN 才跑，否则跳过
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 检查是否配置了 EXPO_TOKEN
+        id: check
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::warning::未配置 EXPO_TOKEN secret，跳过 EAS 构建。"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 安装依赖
+        if: steps.check.outputs.skip == 'false'
+        run: npm ci
+
+      - name: 提交 EAS 构建
+        if: steps.check.outputs.skip == 'false'
+        working-directory: apps/app
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        # --non-interactive 时凭据必须已经配置在 Expo 账号里
+        run: npx eas-cli@latest build --platform ios --profile production --non-interactive --no-wait

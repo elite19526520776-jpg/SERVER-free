@@ -1,0 +1,77 @@
+{
+  "name": "chatapp-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "微聊桌面客户端（Windows / macOS）",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "sync": "node scripts/sync-renderer.js",
+    "build:renderer": "npm --prefix ../app run export:web && npm run sync",
+    "pack": "npm run build:renderer && electron-builder --dir",
+    "dist:win": "npm run build:renderer && electron-builder --win",
+    "dist:mac": "npm run build:renderer && electron-builder --mac",
+    "dist:all": "npm run build:renderer && electron-builder --win --mac"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.chatapp.desktop",
+    "productName": "微聊",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "tcp-bridge.js",
+      "renderer/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "微聊-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "微聊"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.social-networking",
+      "artifactName": "微聊-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Network"
+    }
+  }
+}

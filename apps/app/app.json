@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "微聊",
+    "slug": "chatapp",
+    "scheme": "chatapp",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b0f17"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.chatapp.client",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        },
+        "NSLocalNetworkUsageDescription": "用于在同一 Wi-Fi 下直接连接好友设备收发消息，这样消息不必经过服务器中转。",
+        "NSBonjourServices": ["_chatapp._tcp"]
+      }
+    },
+    "android": {
+      "package": "com.chatapp.client",
+      "adaptiveIcon": {
+        "backgroundColor": "#0b0f17",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+        "android.permission.CAMERA"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "扫描好友的配对二维码，用于建立点对点直连。"
+        }
+      ]
+    ]
+  }
+}
