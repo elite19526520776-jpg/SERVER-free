@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>方块世界 · VoxelCraft</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%236b8f3a'/%3E%3Crect y='12' width='32' height='20' fill='%23866043'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="ui"></div>
+
+  <div id="loading">
+    <div class="loading-inner">
+      <h1>方块世界</h1>
+      <p class="sub">程序化材质 · 无限地形 · 多生物群系</p>
+      <div class="spinner"></div>
+      <p id="loading-status">正在初始化…</p>
+      <div class="tips">
+        <span>WASD 移动</span><span>空格 跳跃</span><span>左键 挖掘</span>
+        <span>右键 放置</span><span>E 背包</span><span>F1 帮助</span>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

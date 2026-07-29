@@ -1,0 +1,31 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>材质表</title>
+<style>
+body{background:#2a2a30;color:#ddd;font:12px sans-serif;margin:8px}
+.g{display:flex;flex-wrap:wrap;gap:6px}
+.c{width:96px;text-align:center}
+canvas{width:88px;height:88px;image-rendering:pixelated;border:1px solid #555}
+</style></head><body>
+<div class="g" id="g"></div>
+<script type="module">
+import { TEXTURES, TEX_NAMES, buildTextureData, TEX_SIZE } from './src/render/textures.js';
+const data = buildTextureData();
+const g = document.getElementById('g');
+TEX_NAMES.forEach((name, i) => {
+  const d = document.createElement('div'); d.className='c';
+  const c = document.createElement('canvas'); c.width=TEX_SIZE*2; c.height=TEX_SIZE*2;
+  const ctx = c.getContext('2d');
+  const tmp = document.createElement('canvas'); tmp.width=tmp.height=TEX_SIZE;
+  const tctx = tmp.getContext('2d');
+  const img = tctx.createImageData(TEX_SIZE, TEX_SIZE);
+  img.data.set(data.albedo.subarray(i*TEX_SIZE*TEX_SIZE*4, (i+1)*TEX_SIZE*TEX_SIZE*4));
+  tctx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  // 2x2 平铺，检查接缝
+  for (let a=0;a<2;a++) for (let b=0;b<2;b++) ctx.drawImage(tmp, a*TEX_SIZE, b*TEX_SIZE);
+  d.appendChild(c);
+  const l = document.createElement('div'); l.textContent = name; d.appendChild(l);
+  g.appendChild(d);
+});
+window.__count = TEX_NAMES.length;
+window.__done = true;
+</script></body></html>
