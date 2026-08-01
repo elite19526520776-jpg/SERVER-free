@@ -40,12 +40,18 @@ floating Lego bricks.
 一整背包石头在现实里有几吨重。总重量超过阈值就开始触发缓慢效果，越重越慢。重量按方块硬度估算，工具/盔甲另算。
 
 ### 6. 内置 64× 写实材质包
-22 张程序化生成的 64×64 材质（原版是 16×16）：石头、圆石、深板岩、泥土、沙子、沙砾、砖块、石砖、橡木板/原木/年轮、草方块、树叶、安山岩/闪长岩/花岗岩、粘土、雪、砂岩。
+113 个方块的 64×64 材质（原版是 16×16），在 **选项 → 资源包** 里启用
+`Realistic Blocks — Textures` 即可。
 
-在 **选项 → 资源包** 里启用 `Realistic Blocks — Textures` 即可。材质由 `tools/generate_textures.py` 生成，改配方重跑脚本就能换风格：
+这套图由仓库里的 [`RealisticTextures`](../RealisticTextures) 生成器产出，模组内置的是它的
+反照率子集。想要法线/高光贴图（配合光影用）就直接装完整的 `RealisticTextures` 资源包。
+
+重新生成并同步到模组：
 
 ```bash
-python3 tools/generate_textures.py
+cd ../RealisticTextures
+python3 tools/generate_pack.py \
+    --mod-pack ../RealisticBlocks/src/main/resources/resourcepacks/realistic_textures/assets/minecraft/textures/block
 ```
 
 ---
@@ -122,9 +128,10 @@ cd RealisticBlocks
 「让方块还原现实」有两层意思，这个模组两边都做了，但侧重点不同：
 
 - **物理行为**（重力、结构、重量、工具）—— 这是模组的主体，也是资源包做不到的部分。
-- **外观**—— 严格来说属于资源包的范畴。内置的 64× 材质是程序化生成的写实风格（噪声 + Voronoi +
-  木纹/砖缝算法），比原版真实得多，但它不是照片扫描材质。想要照片级画面还需要配合光影包
-  （Iris + Complementary / BSL 之类）和 PBR 材质包。
+- **外观**—— 严格来说属于资源包和光影的范畴，所以拆成了两个独立项目：
+  [`RealisticTextures`](../RealisticTextures)（113 个方块的 64× 材质 + LabPBR 法线/高光图）和
+  [`RealisticShaders`](../RealisticShaders)（延迟光照 + 阴影 + SSAO + 水面反射）。
+  三个一起装才是完整效果。材质是程序化生成的写实风格，不是照片扫描材质。
 
 ---
 
