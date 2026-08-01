@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "realisticblocks",
+  "version": "${version}",
+  "name": "Realistic Blocks",
+  "description": "让方块遵守现实规则：没有支撑就会塌，砸下来会伤人，徒手挖不动岩石，背包太重会拖慢你。内置一套高分辨率写实材质包。 / Blocks obey real-world rules: unsupported structures collapse, falling debris hurts, rock needs real tools, and a heavy pack slows you down. Ships with a high-resolution realistic texture pack.",
+  "authors": [
+    "Realistic Blocks contributors"
+  ],
+  "license": "MIT",
+  "icon": "assets/realisticblocks/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.realisticblocks.RealisticBlocks"
+    ],
+    "client": [
+      "com.realisticblocks.client.RealisticBlocksClient"
+    ]
+  },
+  "mixins": [
+    "realisticblocks.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

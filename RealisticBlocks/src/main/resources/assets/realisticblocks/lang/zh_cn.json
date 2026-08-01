@@ -1,0 +1,5 @@
+{
+  "message.realisticblocks.need_tool": "徒手撬不开%s，去找把合适的工具。",
+  "message.realisticblocks.overloaded": "负重过大 —— 当前重量 %s。",
+  "resourcePack.realisticblocks.realistic_textures": "真实方块 —— 写实材质"
+}
